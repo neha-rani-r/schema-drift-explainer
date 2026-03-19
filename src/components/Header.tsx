@@ -38,7 +38,7 @@ export function Header() {
               Schema Drift Explainer
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: -1 }}>
-              Month 2 of 12 · DataForge Series by Neha Rani
+              Month 2 of 12 · Data Engineering Series by Neha Rani
             </div>
           </div>
         </div>
