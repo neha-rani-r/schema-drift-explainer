@@ -263,7 +263,7 @@ export default function App() {
           style={{ color: 'var(--text-secondary)', textDecoration: 'none' }}>
           Neha Rani
         </a>
-        {' '}· Month 2 of 12 · DataForge Series · Powered by Groq + Llama 3.3 70B
+        {' '}· Built by Neha Rani · Month 2 of 12 · Data Engineering Series · Powered by Llama 3.3 70B
       </footer>
     </div>
   );
