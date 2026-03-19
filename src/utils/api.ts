@@ -1,7 +1,6 @@
 import type { DriftReport } from '../types';
 
-const WORKER_URL = import.meta.env.VITE_WORKER_URL || 'https://schema-drift-proxy.YOUR_SUBDOMAIN.workers.dev';
-
+const WORKER_URL = (import.meta as any).env?.VITE_WORKER_URL || 'https://schema-drift-proxy.29neha93.workers.dev';
 const SYSTEM_PROMPT = `You are a senior data engineer specializing in schema evolution, backward/forward compatibility, and data pipeline reliability. 
 
 Analyze two schemas and identify all drifts. For EACH drift, respond only with a valid JSON object matching this exact structure:
