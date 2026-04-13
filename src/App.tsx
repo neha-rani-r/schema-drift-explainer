@@ -7,7 +7,7 @@ import { SummaryBar } from "./components/SummaryBar";
 import { diffSchemas, detectFormat } from "./utils/differ";
 import { explainDiffs, DriftResult } from "./utils/api";
 
-const GROQ_API_KEY = import.meta.env.VITE_GROQ_API_KEY || "";
+const GROQ_API_KEY = ((import.meta as unknown) as { env: Record<string, string> }).env?.VITE_GROQ_API_KEY || "";
 
 export default function App() {
   const [oldSchema, setOldSchema] = useState("");
