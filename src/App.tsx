@@ -1,662 +1,451 @@
-import { useState, useRef, useCallback } from "react";
+import React, { useState } from "react";
+import { SchemaEditor } from "./components/SchemaEditor";
+import { DriftCard } from "./components/DriftCard";
+import { DiffStats } from "./components/DiffStats";
+import { SummaryBar } from "./components/SummaryBar";
+import { diffSchemas } from "./utils/differ";
+import { explainDiffs, DriftResult } from "./utils/api";
 
-// ─── CONFIGURATION ──────────────────────────────────────────────────────────
-// Paste your Cloudflare Worker URL below
-const WORKER_URL = "https://dataforge-proxy.29neha93.workers.dev";
+const GROQ_API_KEY =
+  ((import.meta as unknown) as { env: Record<string, string> }).env
+    ?.VITE_GROQ_API_KEY ?? "";
 
-// ─── BRAND & DESIGN TOKENS ──────────────────────────────────────────────────
-const STYLES = `
-  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;1,400;1,500&family=Inter:wght@300;400;500&family=Nunito:wght@900&display=swap');
+const SAMPLES: Record<string, { label: string; old: string; new: string }> = {
+  sql: {
+    label: "SQL DDL",
+    old: `CREATE TABLE transactions (
+    transaction_id  VARCHAR(36)    NOT NULL,
+    account_id      INTEGER        NOT NULL,
+    amount          DECIMAL(10,2)  NOT NULL,
+    currency        CHAR(3)        NOT NULL DEFAULT 'USD',
+    txn_type        VARCHAR(20)    NOT NULL,
+    status          VARCHAR(10)    NOT NULL DEFAULT 'pending',
+    created_at      TIMESTAMP      NOT NULL DEFAULT NOW(),
+    description     TEXT
+);`,
+    new: `CREATE TABLE transactions (
+    transaction_id  BIGINT         NOT NULL,
+    account_id      INTEGER        NOT NULL,
+    amount          VARCHAR(20)    NOT NULL,
+    txn_type        VARCHAR(20)    NOT NULL,
+    status          VARCHAR(20)    NOT NULL DEFAULT 'pending',
+    created_at      TIMESTAMP      NOT NULL DEFAULT NOW(),
+    processed_at    TIMESTAMP,
+    description     VARCHAR(500),
+    merchant_id     INTEGER        NOT NULL
+);`,
+  },
+  json: {
+    label: "JSON Schema",
+    old: `{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["order_id", "customer_id", "amount"],
+  "properties": {
+    "order_id": { "type": "string" },
+    "customer_id": { "type": "integer" },
+    "amount": { "type": "number" },
+    "currency": { "type": "string" },
+    "status": { "type": "string" }
+  }
+}`,
+    new: `{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["order_id", "customer_id", "amount", "region"],
+  "properties": {
+    "order_id": { "type": "integer" },
+    "customer_id": { "type": "integer" },
+    "amount": { "type": "string" },
+    "region": { "type": "string" },
+    "updated_at": { "type": "string" }
+  }
+}`,
+  },
+  avro: {
+    label: "Avro Schema",
+    old: `{
+  "type": "record",
+  "name": "UserEvent",
+  "namespace": "com.company.events",
+  "fields": [
+    { "name": "user_id", "type": "string" },
+    { "name": "event_type", "type": "string" },
+    { "name": "timestamp", "type": "long" },
+    { "name": "session_id", "type": ["null", "string"], "default": null }
+  ]
+}`,
+    new: `{
+  "type": "record",
+  "name": "UserEvent",
+  "namespace": "com.company.analytics",
+  "fields": [
+    { "name": "user_id", "type": "long" },
+    { "name": "event_type", "type": "string" },
+    { "name": "timestamp", "type": "long" },
+    { "name": "geo_country", "type": "string" }
+  ]
+}`,
+  },
+};
 
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-  :root {
-    --bg:      #ffffff;
-    --surface: #f7f6f3;
-    --border:  #e8e6e1;
-    --text:    #111110;
-    --muted:   #999892;
-    --accent:  #2e7d32;
-    --dark:    #1a1a1a;
-    --serif:   'Playfair Display', Georgia, serif;
-    --sans:    'Inter', system-ui, sans-serif;
-    --logo:    'Nunito', sans-serif;
-    --radius:  10px;
-    --shadow:  0 1px 3px rgba(0,0,0,0.07), 0 4px 16px rgba(0,0,0,0.04);
-  }
-
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--sans);
-    min-height: 100vh;
-    -webkit-font-smoothing: antialiased;
-  }
-
-  /* ── Animations ── */
-  @keyframes needleRock {
-    0%,100% { transform: rotate(-6deg); }
-    50%      { transform: rotate(6deg); }
-  }
-  @keyframes needleSpin {
-    from { transform: rotate(0deg); }
-    to   { transform: rotate(360deg); }
-  }
-  @keyframes birdFloat {
-    0%,100% { transform: translateY(0px); }
-    50%      { transform: translateY(-6px); }
-  }
-  @keyframes fadeUp {
-    from { opacity: 0; transform: translateY(12px); }
-    to   { opacity: 1; transform: translateY(0); }
-  }
-  @keyframes shimmer {
-    0%   { opacity: 0.5; }
-    50%  { opacity: 1; }
-    100% { opacity: 0.5; }
-  }
-  @keyframes toastIn {
-    from { opacity: 0; transform: translateY(8px); }
-    to   { opacity: 1; transform: translateY(0); }
-  }
-
-  .compass-idle    { animation: needleRock 3s ease-in-out infinite; transform-origin: center; }
-  .compass-loading { animation: needleSpin 1.2s linear infinite; transform-origin: center; }
-  .bird-a { animation: birdFloat 3s ease-in-out infinite; }
-  .bird-b { animation: birdFloat 3s ease-in-out 0.8s infinite; }
-  .bird-c { animation: birdFloat 3s ease-in-out 1.6s infinite; }
-  .fade-up { animation: fadeUp 0.4s ease both; }
-  .shimmer { animation: shimmer 1.6s ease-in-out infinite; }
-
-  /* ── Layout ── */
-  .app    { max-width: 680px; margin: 0 auto; padding: 0 0 80px; }
-  .header {
-    position: sticky; top: 0; z-index: 50;
-    background: rgba(255,255,255,0.92);
-    backdrop-filter: blur(12px);
-    border-bottom: 1px solid var(--border);
-    padding: 14px 24px;
-    display: flex; align-items: center; justify-content: space-between;
-  }
-  .header-logo {
-    display: flex; align-items: center; gap: 10px;
-  }
-  .logo-mark { flex-shrink: 0; }
-  .logo-text {
-    display: flex; flex-direction: column; gap: 0;
-  }
-  .logo-en {
-    font-family: var(--logo);
-    font-size: 15px; font-weight: 900;
-    letter-spacing: 0.12em; text-transform: uppercase;
-    color: var(--dark); line-height: 1;
-  }
-  .logo-hi {
-    font-family: var(--serif);
-    font-size: 11px; color: var(--accent);
-    font-style: italic; letter-spacing: 0.04em; line-height: 1.4;
-  }
-  .header-date {
-    font-size: 11px; color: var(--muted);
-    font-family: var(--sans); font-weight: 300;
-    letter-spacing: 0.06em;
-  }
-
-  /* ── Tabs ── */
-  .tabs {
-    display: flex; gap: 0;
-    border-bottom: 1px solid var(--border);
-    padding: 0 24px;
-    background: var(--bg);
-  }
-  .tab-btn {
-    font-family: var(--sans); font-size: 12px; font-weight: 500;
-    letter-spacing: 0.06em; text-transform: uppercase;
-    color: var(--muted); background: none; border: none; cursor: pointer;
-    padding: 14px 0; margin-right: 24px;
-    border-bottom: 2px solid transparent;
-    transition: color 0.2s, border-color 0.2s;
-  }
-  .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
-  .tab-btn:hover:not(.active) { color: var(--text); }
-
-  /* ── Write Tab ── */
-  .composer { padding: 28px 24px; }
-  .loc-row  { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
-  .loc-input {
-    flex: 1; font-family: var(--serif); font-size: 20px; font-style: italic;
-    color: var(--text); background: none; border: none; outline: none;
-    border-bottom: 1px solid var(--border); padding-bottom: 6px;
-    transition: border-color 0.2s;
-  }
-  .loc-input::placeholder { color: var(--muted); }
-  .loc-input:focus { border-bottom-color: var(--accent); }
-  .loc-date { font-size: 11px; color: var(--muted); white-space: nowrap; letter-spacing: 0.05em; }
-
-  .prompt-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
-  .chip {
-    font-family: var(--sans); font-size: 11px; font-weight: 500;
-    padding: 6px 14px; border-radius: 100px;
-    border: 1px solid var(--border); background: var(--bg);
-    color: var(--muted); cursor: pointer;
-    display: flex; align-items: center; gap: 5px;
-    transition: all 0.15s; white-space: nowrap;
-  }
-  .chip:hover { border-color: var(--accent); color: var(--accent); }
-  .chip.active {
-    background: var(--accent); border-color: var(--accent);
-    color: #fff;
-  }
-
-  .active-prompt {
-    background: var(--surface); border-radius: var(--radius);
-    padding: 16px 18px; margin-bottom: 16px;
-  }
-  .prompt-q { font-family: var(--serif); font-size: 15px; font-style: italic; color: var(--text); line-height: 1.5; }
-  .prompt-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; margin-top: 4px; }
-
-  .entry-area {
-    width: 100%; min-height: 120px; resize: vertical;
-    font-family: var(--serif); font-size: 15px; line-height: 1.7;
-    color: var(--text); background: none; border: none; outline: none;
-    border-bottom: 1px solid var(--border); padding-bottom: 8px;
-    transition: border-color 0.2s;
-  }
-  .entry-area::placeholder { color: var(--muted); font-style: italic; }
-  .entry-area:focus { border-bottom-color: var(--accent); }
-
-  .entry-actions {
-    display: flex; align-items: center; justify-content: space-between;
-    margin-top: 16px;
-  }
-  .voice-btn {
-    display: flex; align-items: center; gap: 7px;
-    font-family: var(--sans); font-size: 12px; font-weight: 500;
-    color: var(--muted); background: none; border: 1px solid var(--border);
-    border-radius: 100px; padding: 8px 16px; cursor: pointer;
-    transition: all 0.2s;
-  }
-  .voice-btn:hover { border-color: var(--accent); color: var(--accent); }
-  .voice-btn.recording {
-    background: #fef2f2; border-color: #ef4444; color: #ef4444;
-  }
-  .voice-dot {
-    width: 7px; height: 7px; border-radius: 50%;
-    background: currentColor;
-  }
-  .voice-btn.recording .voice-dot { animation: shimmer 0.8s ease-in-out infinite; }
-
-  .save-btn {
-    font-family: var(--sans); font-size: 12px; font-weight: 500;
-    letter-spacing: 0.06em; text-transform: uppercase;
-    background: var(--accent); color: #fff;
-    border: none; border-radius: var(--radius);
-    padding: 10px 22px; cursor: pointer;
-    transition: opacity 0.2s;
-  }
-  .save-btn:hover { opacity: 0.88; }
-  .save-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-
-  /* ── Emotion Tags ── */
-  .emotion-row { margin-top: 18px; }
-  .emotion-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 8px; }
-  .emotion-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-  .emo-chip {
-    font-size: 11px; padding: 4px 11px; border-radius: 100px;
-    border: 1px solid var(--border); background: var(--bg);
-    color: var(--muted); cursor: pointer; transition: all 0.15s;
-  }
-  .emo-chip.active { background: var(--surface); border-color: var(--accent); color: var(--accent); }
-
-  /* ── Journal Tab ── */
-  .journal { padding: 24px; }
-
-  /* Mountain/wave SVG divider */
-  .divider { width: 100%; margin: 0 0 24px; display: block; }
-
-  .entry-card {
-    background: var(--surface); border-radius: var(--radius);
-    padding: 18px 20px; margin-bottom: 14px;
-    border: 1px solid var(--border);
-    animation: fadeUp 0.35s ease both;
-  }
-  .entry-meta {
-    display: flex; align-items: center; justify-content: space-between;
-    margin-bottom: 10px;
-  }
-  .entry-loc { font-family: var(--serif); font-size: 15px; font-style: italic; color: var(--text); }
-  .entry-date { font-size: 10px; color: var(--muted); letter-spacing: 0.06em; }
-  .entry-prompt-tag {
-    font-size: 10px; color: var(--accent); text-transform: uppercase;
-    letter-spacing: 0.08em; margin-bottom: 8px;
-  }
-  .entry-text { font-family: var(--serif); font-size: 14px; line-height: 1.7; color: var(--text); }
-  .entry-emotion { font-size: 11px; color: var(--muted); margin-top: 8px; }
-
-  /* ── Memoir Tab ── */
-  .memoir-section { padding: 28px 24px; }
-  .memoir-birds {
-    display: flex; align-items: center; gap: 14px;
-    margin-bottom: 20px;
-  }
-
-  .memoir-cta {
-    display: flex; align-items: center; justify-content: space-between;
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 18px 20px;
-    cursor: pointer; width: 100%;
-    transition: border-color 0.2s;
-  }
-  .memoir-cta:hover { border-color: var(--accent); }
-  .memoir-cta-left {}
-  .memoir-title-text { font-family: var(--serif); font-size: 16px; color: var(--text); }
-  .memoir-sub { font-size: 11px; color: var(--muted); margin-top: 3px; }
-  .memoir-arrow { font-size: 18px; color: var(--muted); }
-
-  .memoir-output {
-    margin-top: 20px; padding: 24px 0;
-    border-top: 1px solid var(--border);
-    animation: fadeUp 0.4s ease both;
-  }
-  .memoir-text {
-    font-family: var(--serif); font-size: 16px; line-height: 1.85;
-    color: var(--text); white-space: pre-wrap;
-  }
-  .memoir-text.loading { color: var(--muted); font-style: italic; }
-
-  /* ── Empty state ── */
-  .empty { text-align: center; padding: 60px 24px; }
-  .empty-compass { margin: 0 auto 20px; display: block; }
-  .empty-text { font-family: var(--serif); font-size: 18px; font-style: italic; color: var(--muted); margin-bottom: 8px; }
-  .empty-sub { font-size: 12px; color: var(--muted); }
-
-  /* ── Toast ── */
-  .toast {
-    position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%);
-    background: var(--dark); color: #fff;
-    font-family: var(--sans); font-size: 12px; font-weight: 500;
-    padding: 10px 20px; border-radius: 100px;
-    opacity: 0; pointer-events: none; transition: opacity 0.25s;
-    z-index: 200;
-  }
-  .toast.show { opacity: 1; animation: toastIn 0.25s ease; }
-
-  /* ── Share card ── */
-  .share-btn {
-    margin-top: 10px; font-size: 11px; color: var(--muted);
-    background: none; border: 1px solid var(--border);
-    border-radius: 100px; padding: 5px 13px; cursor: pointer;
-    font-family: var(--sans);
-    transition: all 0.15s;
-  }
-  .share-btn:hover { border-color: var(--accent); color: var(--accent); }
-`;
-
-// ─── DATA ────────────────────────────────────────────────────────────────────
-const PROMPTS = [
-  { id: "surprise", icon: "✦", label: "Cultural contrast", q: "What surprised you today that you wouldn't find at home?" },
-  { id: "senses",   icon: "◈", label: "Sensory memory",    q: "Describe a sound or smell you want to remember." },
-  { id: "food",     icon: "◉", label: "Taste memory",      q: "What did you eat, and what did it remind you of?" },
-  { id: "people",   icon: "◎", label: "Human moment",      q: "Describe a person you saw or spoke to today." },
-  { id: "light",    icon: "◐", label: "Light & atmosphere", q: "What did the light look like at a moment you want to keep?" },
-  { id: "slow",     icon: "◷", label: "Slow observation",  q: "What did you notice only because you stopped moving?" },
-  { id: "feeling",  icon: "◑", label: "Inner state",       q: "What did this place make you feel that you can't explain?" },
-];
-
-const EMOTIONS = ["wonder", "longing", "peace", "disoriented", "grateful", "melancholic", "alive", "anonymous", "connected", "curious", "overwhelmed", "nostalgic", "free"];
-
-// ─── SVG COMPONENTS ──────────────────────────────────────────────────────────
-function CompassLogo({ spinning = false, size = 40 }: { spinning?: boolean; size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg" className="logo-mark">
-      <circle cx="36" cy="36" r="32" stroke="#1a1a1a" strokeWidth="2.5" fill="none" />
-      {/* Cardinal ticks */}
-      <line x1="36" y1="4"  x2="36" y2="11" stroke="#1a1a1a" strokeWidth="2" />
-      <line x1="36" y1="61" x2="36" y2="68" stroke="#1a1a1a" strokeWidth="2" />
-      <line x1="4"  y1="36" x2="11" y2="36" stroke="#1a1a1a" strokeWidth="2" />
-      <line x1="61" y1="36" x2="68" y2="36" stroke="#1a1a1a" strokeWidth="2" />
-      {/* Needle group */}
-      <g className={spinning ? "compass-loading" : "compass-idle"} style={{ transformOrigin: "36px 36px" }}>
-        {/* North = pen nib (green) */}
-        <path d="M36,13 L30,34 L36,29 L42,34 Z" fill="#2e7d32" />
-        <line x1="36" y1="17" x2="36" y2="29" stroke="#1a1a1a" strokeWidth="0.9" strokeOpacity="0.4" />
-        <circle cx="36" cy="12" r="2.8" fill="#2e7d32" />
-        {/* South needle (muted) */}
-        <path d="M36,59 L30,38 L36,43 L42,38 Z" fill="#1a1a1a" opacity="0.35" />
-      </g>
-      {/* Centre jewel */}
-      <circle cx="36" cy="36" r="5" fill="#1a1a1a" />
-      <circle cx="36" cy="36" r="2.5" fill="#2e7d32" />
-    </svg>
-  );
-}
-
-function MountainDivider() {
-  return (
-    <svg className="divider" viewBox="0 0 640 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
-      <path
-        d="M0,28 L80,8 L140,20 L220,2 L300,16 L380,4 L460,18 L540,6 L640,22 L640,32 L0,32 Z"
-        fill="none" stroke="#2e7d32" strokeWidth="1.2" strokeLinejoin="round" opacity="0.35"
-      />
-    </svg>
-  );
-}
-
-function Bird({ cls }: { cls: string }) {
-  return (
-    <svg width="22" height="10" viewBox="0 0 22 10" fill="none" xmlns="http://www.w3.org/2000/svg" className={cls} aria-hidden>
-      <path d="M11,5 Q5,0 0,2" stroke="#2e7d32" strokeWidth="1.5" strokeLinecap="round" fill="none" />
-      <path d="M11,5 Q17,0 22,2" stroke="#2e7d32" strokeWidth="1.5" strokeLinecap="round" fill="none" />
-    </svg>
-  );
-}
-
-// ─── MAIN APP ────────────────────────────────────────────────────────────────
 export default function App() {
-  const [tab, setTab] = useState<"write" | "journal" | "memoir">("write");
-  const [location, setLocation] = useState("");
-  const [selectedPrompt, setSelectedPrompt] = useState(0);
-  const [entryText, setEntryText] = useState("");
-  const [selectedEmotions, setSelectedEmotions] = useState<string[]>([]);
-  const [isRecording, setIsRecording] = useState(false);
-  const [entries, setEntries] = useState<any[]>([]);
-  const [memoir, setMemoir] = useState("");
-  const [memoirOpen, setMemoirOpen] = useState(false);
-  const [memoirLoading, setMemoirLoading] = useState(false);
-  const [toast, setToast] = useState("");
-  const [toastVisible, setToastVisible] = useState(false);
+  const [oldSchema, setOldSchema] = useState("");
+  const [newSchema, setNewSchema] = useState("");
+  const [results, setResults] = useState<DriftResult[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [oldFieldCount, setOldFieldCount] = useState(0);
+  const [newFieldCount, setNewFieldCount] = useState(0);
+  const [activeSample, setActiveSample] = useState<string | null>(null);
+  const [analyzed, setAnalyzed] = useState(false);
 
-  const recognitionRef = useRef<any>(null);
-
-  const showToast = (msg: string) => {
-    setToast(msg);
-    setToastVisible(true);
-    setTimeout(() => setToastVisible(false), 2400);
-  };
-
-  const toggleEmotion = (e: string) =>
-    setSelectedEmotions(prev => prev.includes(e) ? prev.filter(x => x !== e) : [...prev, e]);
-
-  const startRecording = useCallback(() => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) { showToast("Voice not supported in this browser"); return; }
-    const recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = "en-IN";
-    recognition.onresult = (e: any) => {
-      const transcript = Array.from(e.results).map((r: any) => r[0].transcript).join("");
-      setEntryText(prev => (prev ? prev + " " : "") + transcript);
-    };
-    recognition.onerror = () => setIsRecording(false);
-    recognition.onend = () => setIsRecording(false);
-    recognition.start();
-    recognitionRef.current = recognition;
-    setIsRecording(true);
-  }, []);
-
-  const stopRecording = useCallback(() => {
-    recognitionRef.current?.stop();
-    setIsRecording(false);
-  }, []);
-
-  const saveEntry = () => {
-    if (!entryText.trim()) { showToast("Write something first"); return; }
-    if (!location.trim()) { showToast("Add a location"); return; }
-    setEntries(prev => [{
-      id: Date.now(),
-      location: location.trim(),
-      prompt: PROMPTS[selectedPrompt],
-      text: entryText.trim(),
-      emotions: [...selectedEmotions],
-      date: new Date().toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }),
-    }, ...prev]);
-    setEntryText("");
-    setSelectedEmotions([]);
-    showToast("Entry saved ✦");
-  };
-
-  const generateMemoir = async () => {
-    if (entries.length === 0) { showToast("Write some entries first"); return; }
-    setMemoirOpen(true);
-    setMemoirLoading(true);
-    setMemoir("");
-
-    const entrySummary = entries.slice(0, 6).map(e =>
-      `[${e.location}, ${e.date}]\nPrompt: "${e.prompt.q}"\nEntry: ${e.text}${e.emotions.length ? `\nFelt: ${e.emotions.join(", ")}` : ""}`
-    ).join("\n\n---\n\n");
+  const handleAnalyze = async () => {
+    if (!oldSchema.trim() || !newSchema.trim()) {
+      setError("Please paste both schemas before analyzing.");
+      return;
+    }
+    setError(null);
+    setIsLoading(true);
+    setResults([]);
+    setAnalyzed(false);
 
     try {
-      const response = await fetch(`${WORKER_URL}/v1/messages`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-opus-4-5",
-          max_tokens: 1000,
-          system: `You are a literary travel memoir writer for Safarnama — a travel journaling app for slow travellers who experience the world through all senses. You write in a lyrical, sensory, first-person voice — like Pico Iyer or Patrick Leigh Fermor.
+      const diffs = diffSchemas(oldSchema, newSchema);
+      const removed = diffs.filter((d) => d.changeType === "field_removed").length;
+      const added = diffs.filter((d) => d.changeType === "field_added").length;
+      const changed = diffs.filter((d) => d.changeType !== "field_removed" && d.changeType !== "field_added").length;
+      setOldFieldCount(removed + changed);
+      setNewFieldCount(added + changed);
 
-Given a traveller's raw journal entries, synthesise them into a short memoir passage (250–350 words) that captures the emotional truth of their travels.
-
-Write as if you are the traveller. Use specific details from their entries. Focus on atmosphere, feeling, and what it means to move through the world this way.
-
-Do NOT use generic travel writing clichés. Make it feel intimate and real. End with a single sentence that captures what travel does to a person.`,
-          messages: [{ role: "user", content: `Here are my travel journal entries. Please synthesise them into a personal memoir passage:\n\n${entrySummary}` }],
-        }),
-      });
-
-      if (!response.ok) {
-        const err = await response.text();
-        throw new Error(err);
+      if (diffs.length === 0) {
+        setAnalyzed(true);
+        setIsLoading(false);
+        return;
       }
 
-      const data = await response.json();
-      setMemoir(data.content?.[0]?.text || "Could not generate memoir. Please try again.");
-    } catch (e: any) {
-      setMemoir(`Something went wrong: ${e.message ?? "Check your Cloudflare Worker URL and try again."}`);
+      const explained = await explainDiffs(diffs, GROQ_API_KEY);
+      setResults(explained);
+      setAnalyzed(true);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Analysis failed. Check your schema format.");
     } finally {
-      setMemoirLoading(false);
+      setIsLoading(false);
     }
   };
 
-  const today = new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" });
+  const handleLoadSample = (key: string) => {
+    const s = SAMPLES[key];
+    if (!s) return;
+    setOldSchema(s.old);
+    setNewSchema(s.new);
+    setActiveSample(key);
+    setResults([]);
+    setError(null);
+    setAnalyzed(false);
+  };
+
+  const handleClear = () => {
+    setOldSchema("");
+    setNewSchema("");
+    setResults([]);
+    setError(null);
+    setActiveSample(null);
+    setAnalyzed(false);
+  };
+
+  const canAnalyze = oldSchema.trim().length > 5 && newSchema.trim().length > 5;
 
   return (
-    <>
-      <style>{STYLES}</style>
-      <div className="app">
+    <div style={{
+      minHeight: "100vh",
+      background: "#f8f7f4",
+      color: "#1a1916",
+      fontFamily: "'DM Sans', system-ui, sans-serif",
+    }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&family=Fraunces:wght@600;700&display=swap');
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        ::selection { background: #e8e4d9; }
+        ::-webkit-scrollbar { width: 5px; height: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #d4d0c8; border-radius: 99px; }
+        .sample-btn:hover { background: #f0ede6 !important; border-color: #c4bfb2 !important; }
+        .analyze-btn:hover:not(:disabled) { background: #2d2a24 !important; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(26,25,22,0.15) !important; }
+        .analyze-btn { transition: all 0.2s ease !important; }
+        .clear-btn:hover { background: #f0ede6 !important; }
+        .neha-link { transition: color 0.15s !important; }
+        .neha-link:hover { color: #1a1916 !important; }
+      `}</style>
 
-        {/* ── Header ── */}
-        <header className="header">
-          <div className="header-logo">
-            <CompassLogo size={40} />
-            <div className="logo-text">
-              <span className="logo-en">Safarnama</span>
-              <span className="logo-hi">सफ़रनामा · travel journal</span>
+      {/* Header */}
+      <header style={{
+        borderBottom: "1px solid #e8e4d9",
+        background: "#ffffff",
+        padding: "0 32px",
+        position: "sticky",
+        top: 0,
+        zIndex: 100,
+        boxShadow: "0 1px 0 #e8e4d9",
+      }}>
+        <div style={{ maxWidth: 1080, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", height: 60 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{
+              width: 32, height: 32, background: "#1a1916", borderRadius: 8,
+              display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+            }}>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <rect x="1" y="3" width="5" height="2.5" rx="0.75" fill="white" opacity="0.9"/>
+                <rect x="1" y="7" width="5" height="2.5" rx="0.75" fill="white" opacity="0.4"/>
+                <rect x="8" y="3" width="5" height="2.5" rx="0.75" fill="#a78bfa"/>
+                <rect x="8" y="7" width="5" height="4" rx="0.75" fill="#a78bfa"/>
+                <line x1="7" y1="2.5" x2="7" y2="13" stroke="rgba(255,255,255,0.2)" strokeWidth="0.75"/>
+              </svg>
+            </div>
+            <div>
+              <div style={{ fontFamily: "'Fraunces', serif", fontWeight: 700, fontSize: 15, letterSpacing: "-0.02em", color: "#1a1916" }}>
+                Schema Drift Explainer
+              </div>
+              <div style={{ fontSize: 11, color: "#9b9690", marginTop: -1 }}>Month 2 of 12 · DataForge Series</div>
             </div>
           </div>
-          <div className="header-date">{today}</div>
-        </header>
 
-        {/* ── Tabs ── */}
-        <nav className="tabs">
-          {(["write", "journal", "memoir"] as const).map(t => (
-            <button
-              key={t}
-              className={`tab-btn ${tab === t ? "active" : ""}`}
-              onClick={() => setTab(t)}
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <a
+              href="https://www.linkedin.com/in/neha-rani-r/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="neha-link"
+              style={{
+                display: "flex", alignItems: "center", gap: 6,
+                padding: "6px 14px", borderRadius: 8,
+                fontSize: 13, color: "#6b6860", textDecoration: "none",
+                border: "1px solid #e8e4d9", background: "#fafaf9",
+                fontWeight: 500,
+              }}
             >
-              {t === "write" ? "New Entry" : t === "journal" ? `Journal (${entries.length})` : "Memoir"}
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z"/>
+                <rect x="2" y="9" width="4" height="12"/>
+                <circle cx="4" cy="4" r="2"/>
+              </svg>
+              Neha Rani
+            </a>
+            <a
+              href="https://github.com/neha-rani-r/schema-drift-explainer"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="neha-link"
+              style={{
+                display: "flex", alignItems: "center", gap: 6,
+                padding: "6px 14px", borderRadius: 8,
+                fontSize: 13, color: "#6b6860", textDecoration: "none",
+                border: "1px solid #e8e4d9", background: "#fafaf9",
+                fontWeight: 500,
+              }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
+              </svg>
+              GitHub
+            </a>
+          </div>
+        </div>
+      </header>
+
+      <main style={{ maxWidth: 1080, margin: "0 auto", padding: "40px 32px 80px" }}>
+
+        {/* Hero */}
+        <div style={{ marginBottom: 36, maxWidth: 560 }}>
+          <h1 style={{
+            fontFamily: "'Fraunces', serif",
+            fontSize: 36, fontWeight: 700,
+            letterSpacing: "-0.03em", lineHeight: 1.15,
+            color: "#1a1916", marginBottom: 12,
+          }}>
+            Spot schema drift before<br />it breaks your pipeline.
+          </h1>
+          <p style={{ fontSize: 15, color: "#6b6860", lineHeight: 1.65 }}>
+            Paste two schemas — JSON Schema, Avro, or SQL DDL. Get a deterministic breakdown of every change: what drifted, what broke, and exactly how to fix it.
+          </p>
+        </div>
+
+        {/* Sample buttons */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, color: "#9b9690", fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase" }}>Try a sample:</span>
+          {Object.entries(SAMPLES).map(([key, s]) => (
+            <button
+              key={key}
+              className="sample-btn"
+              onClick={() => handleLoadSample(key)}
+              style={{
+                padding: "5px 14px", borderRadius: 99,
+                border: `1px solid ${activeSample === key ? "#1a1916" : "#ddd9d0"}`,
+                background: activeSample === key ? "#1a1916" : "#ffffff",
+                fontSize: 12, fontFamily: "'DM Sans', sans-serif",
+                color: activeSample === key ? "#ffffff" : "#6b6860",
+                cursor: "pointer", fontWeight: activeSample === key ? 600 : 400,
+                transition: "all 0.15s",
+              }}
+            >
+              {s.label}
             </button>
           ))}
-        </nav>
+        </div>
 
-        {/* ── Write Tab ── */}
-        {tab === "write" && (
-          <div className="composer fade-up">
-            {/* Location */}
-            <div className="loc-row">
-              <input
-                className="loc-input"
-                placeholder="Where are you?"
-                value={location}
-                onChange={e => setLocation(e.target.value)}
-              />
-              <span className="loc-date">
-                {new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
-              </span>
+        {/* Editors */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+          <SchemaEditor
+            label="Old Schema"
+            sublabel="baseline / production"
+            value={oldSchema}
+            onChange={(v) => { setOldSchema(v); setActiveSample(null); }}
+            accentColor="#e8e4d9"
+          />
+          <SchemaEditor
+            label="New Schema"
+            sublabel="proposed / updated"
+            value={newSchema}
+            onChange={(v) => { setNewSchema(v); setActiveSample(null); }}
+            accentColor="#b8d4c8"
+          />
+        </div>
+
+        {/* Actions */}
+        <div style={{ display: "flex", justifyContent: "center", gap: 10, marginBottom: 36 }}>
+          <button
+            className="analyze-btn"
+            onClick={handleAnalyze}
+            disabled={!canAnalyze || isLoading}
+            style={{
+              background: canAnalyze && !isLoading ? "#1a1916" : "#e8e4d9",
+              color: canAnalyze && !isLoading ? "#ffffff" : "#9b9690",
+              border: "none", borderRadius: 10,
+              padding: "12px 32px", fontSize: 14,
+              fontFamily: "'DM Sans', sans-serif",
+              fontWeight: 600, cursor: canAnalyze && !isLoading ? "pointer" : "not-allowed",
+              display: "flex", alignItems: "center", gap: 8,
+              minWidth: 200, justifyContent: "center",
+            }}
+          >
+            {isLoading ? (
+              <>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
+                  style={{ animation: "spin 0.8s linear infinite" }}>
+                  <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+                  <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                </svg>
+                Analyzing…
+              </>
+            ) : (
+              <>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+                </svg>
+                Detect Schema Drift
+              </>
+            )}
+          </button>
+          {(oldSchema || newSchema) && (
+            <button
+              className="clear-btn"
+              onClick={handleClear}
+              style={{
+                background: "#ffffff", color: "#6b6860",
+                border: "1px solid #e8e4d9", borderRadius: 10,
+                padding: "12px 20px", fontSize: 14,
+                fontFamily: "'DM Sans', sans-serif",
+                cursor: "pointer", transition: "all 0.15s",
+              }}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+
+        {/* Error */}
+        {error && (
+          <div style={{
+            background: "#fdf2f1", border: "1px solid #f5c6c2",
+            borderRadius: 10, padding: "12px 16px",
+            color: "#c0392b", fontSize: 13, marginBottom: 20,
+          }}>
+            ⚠ {error}
+          </div>
+        )}
+
+        {/* Results */}
+        {(results.length > 0 || isLoading) && (
+          <>
+            <SummaryBar results={results} isLoading={isLoading} />
+            {results.length > 0 && (
+              <DiffStats results={results} oldFieldCount={oldFieldCount} newFieldCount={newFieldCount} />
+            )}
+            {results.map((r, i) => (
+              <DriftCard key={`${r.field}-${i}`} result={r} />
+            ))}
+          </>
+        )}
+
+        {/* No changes */}
+        {!isLoading && analyzed && results.length === 0 && (
+          <div style={{
+            background: "#f0faf5", border: "1px solid #b3dfc8",
+            borderRadius: 12, padding: "24px 32px",
+            textAlign: "center", color: "#1d6a4a", fontSize: 14,
+          }}>
+            ✅ No schema changes detected — schemas are identical.
+          </div>
+        )}
+
+        {/* Empty state */}
+        {!isLoading && !analyzed && !oldSchema && !newSchema && (
+          <div style={{
+            border: "1.5px dashed #ddd9d0", borderRadius: 14,
+            padding: "56px 32px", textAlign: "center",
+          }}>
+            <div style={{ fontSize: 36, marginBottom: 14, opacity: 0.3 }}>⇄</div>
+            <div style={{ fontFamily: "'Fraunces', serif", fontSize: 18, color: "#6b6860", marginBottom: 8 }}>
+              Paste two schemas to get started
             </div>
-
-            {/* Prompt chips */}
-            <div className="prompt-chips">
-              {PROMPTS.map((p, i) => (
-                <button
-                  key={p.id}
-                  className={`chip ${selectedPrompt === i ? "active" : ""}`}
-                  onClick={() => setSelectedPrompt(i)}
-                >
-                  <span>{p.icon}</span>
-                  <span>{p.label}</span>
-                </button>
+            <p style={{ fontSize: 13, color: "#9b9690", maxWidth: 360, margin: "0 auto", lineHeight: 1.6 }}>
+              Or click a sample above to see a live example. Detects type changes, removed fields, nullability shifts, enum drift, and more.
+            </p>
+            <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 24, flexWrap: "wrap" }}>
+              {["Type changes", "Removed fields", "Nullability", "Enum drift", "Default changes"].map(tag => (
+                <span key={tag} style={{
+                  padding: "4px 12px", borderRadius: 99,
+                  background: "#f0ede6", border: "1px solid #e8e4d9",
+                  fontSize: 12, color: "#9b9690",
+                }}>
+                  {tag}
+                </span>
               ))}
             </div>
-
-            {/* Active prompt */}
-            <div className="active-prompt">
-              <div className="prompt-q">"{PROMPTS[selectedPrompt].q}"</div>
-              <div className="prompt-label">{PROMPTS[selectedPrompt].label}</div>
-            </div>
-
-            {/* Textarea */}
-            <textarea
-              className="entry-area"
-              placeholder="Write freely, or tap the mic below..."
-              value={entryText}
-              onChange={e => setEntryText(e.target.value)}
-            />
-
-            {/* Emotion tags */}
-            <div className="emotion-row">
-              <div className="emotion-label">How did it feel?</div>
-              <div className="emotion-chips">
-                {EMOTIONS.map(em => (
-                  <button
-                    key={em}
-                    className={`emo-chip ${selectedEmotions.includes(em) ? "active" : ""}`}
-                    onClick={() => toggleEmotion(em)}
-                  >
-                    {em}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Actions */}
-            <div className="entry-actions" style={{ marginTop: 20 }}>
-              <button
-                className={`voice-btn ${isRecording ? "recording" : ""}`}
-                onClick={isRecording ? stopRecording : startRecording}
-              >
-                <span className="voice-dot" />
-                {isRecording ? "Stop recording" : "Voice entry"}
-              </button>
-              <button className="save-btn" onClick={saveEntry} disabled={!entryText.trim() || !location.trim()}>
-                Save entry
-              </button>
-            </div>
           </div>
         )}
+      </main>
 
-        {/* ── Journal Tab ── */}
-        {tab === "journal" && (
-          <div className="journal">
-            <MountainDivider />
-            {entries.length === 0 ? (
-              <div className="empty">
-                <CompassLogo size={56} />
-                <div className="empty-text" style={{ marginTop: 16 }}>Begin your safarnama.</div>
-                <div className="empty-sub">Your entries will appear here.</div>
-              </div>
-            ) : (
-              entries.map(entry => (
-                <div key={entry.id} className="entry-card">
-                  <div className="entry-meta">
-                    <span className="entry-loc">{entry.location}</span>
-                    <span className="entry-date">{entry.date}</span>
-                  </div>
-                  <div className="entry-prompt-tag">{entry.prompt.label}</div>
-                  <div className="entry-text">{entry.text}</div>
-                  {entry.emotions.length > 0 && (
-                    <div className="entry-emotion">felt: {entry.emotions.join(" · ")}</div>
-                  )}
-                  <button className="share-btn" onClick={() => {
-                    navigator.clipboard.writeText(`${entry.location} — ${entry.text}\n\nfrom my Safarnama ✦`);
-                    showToast("Copied to clipboard");
-                  }}>
-                    Share entry
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
-        )}
-
-        {/* ── Memoir Tab ── */}
-        {tab === "memoir" && (
-          <div className="memoir-section fade-up">
-            {/* Birds */}
-            <div className="memoir-birds">
-              <Bird cls="bird-a" />
-              <Bird cls="bird-b" />
-              <Bird cls="bird-c" />
-              <Bird cls="bird-a" />
-              <Bird cls="bird-b" />
-            </div>
-
-            <button className="memoir-cta" onClick={generateMemoir}>
-              <div className="memoir-cta-left">
-                <div className="memoir-title-text">
-                  {memoir ? "Regenerate memoir" : "Generate your memoir"}
-                </div>
-                <div className="memoir-sub">
-                  {memoir ? "Create a new synthesis from your entries" : "Let AI find the poetry in your observations"}
-                </div>
-              </div>
-              {memoirLoading ? (
-                <CompassLogo spinning size={28} />
-              ) : (
-                <span className="memoir-arrow">→</span>
-              )}
-            </button>
-
-            {memoirOpen && (
-              <div className="memoir-output">
-                {memoirLoading ? (
-                  <div className="memoir-text loading shimmer">Writing your safarnama...</div>
-                ) : (
-                  <>
-                    <div className="memoir-text">{memoir}</div>
-                    <button className="share-btn" style={{ marginTop: 20 }} onClick={() => {
-                      navigator.clipboard.writeText(memoir);
-                      showToast("Memoir copied");
-                    }}>
-                      Copy memoir
-                    </button>
-                  </>
-                )}
-              </div>
-            )}
-
-            {!memoirOpen && entries.length === 0 && (
-              <div className="empty" style={{ paddingTop: 40 }}>
-                <div className="empty-text">No entries yet.</div>
-                <div className="empty-sub">Write some journal entries first, then generate your memoir.</div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      <div className={`toast ${toastVisible ? "show" : ""}`}>{toast}</div>
-    </>
+      {/* Footer */}
+      <footer style={{
+        borderTop: "1px solid #e8e4d9",
+        background: "#ffffff",
+        padding: "20px 32px",
+        textAlign: "center",
+        fontSize: 13,
+        color: "#9b9690",
+      }}>
+        Built by{" "}
+        <a
+          href="https://www.linkedin.com/in/neha-rani-r/"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ color: "#1a1916", textDecoration: "none", fontWeight: 600 }}
+        >
+          Neha Rani
+        </a>
+        {" "}· Month 2 of 12 · DataForge Series · Powered by Llama 3.1 8B via Groq
+      </footer>
+    </div>
   );
 }

@@ -1,4 +1,3 @@
-// SummaryBar.tsx — Shows green backward-compatible banner when no breaking changes
 import React from "react";
 import { DriftResult } from "../utils/api";
 
@@ -10,22 +9,17 @@ interface Props {
 export const SummaryBar: React.FC<Props> = ({ results, isLoading }) => {
   if (isLoading) {
     return (
-      <div
-        style={{
-          padding: "14px 18px",
-          background: "#0f172a",
-          borderRadius: "10px",
-          border: "1px solid #1e293b",
-          marginBottom: "16px",
-          display: "flex",
-          alignItems: "center",
-          gap: "10px",
-          color: "#64748b",
-          fontSize: "14px",
-        }}
-      >
-        <span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⟳</span>
-        Analyzing schema changes…
+      <div style={{
+        padding: "16px 20px", background: "#ffffff",
+        borderRadius: 12, border: "1px solid #e8e4d9",
+        marginBottom: 16, display: "flex", alignItems: "center",
+        gap: 10, color: "#9b9690", fontSize: 14,
+      }}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+          style={{ animation: "spin 0.8s linear infinite", flexShrink: 0 }}>
+          <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+        </svg>
+        Running deterministic diff — no AI involved in change detection…
       </div>
     );
   }
@@ -33,39 +27,29 @@ export const SummaryBar: React.FC<Props> = ({ results, isLoading }) => {
   if (results.length === 0) return null;
 
   const breaking = results.filter((r) => r.severity === "breaking").length;
-  const warning = results.filter((r) => r.severity === "warning").length;
   const isCompatible = breaking === 0;
 
   return (
-    <div
-      style={{
-        padding: "14px 18px",
-        background: isCompatible ? "#022c22" : "#450a0a",
-        borderRadius: "10px",
-        border: `1px solid ${isCompatible ? "#10b98133" : "#ef444433"}`,
-        marginBottom: "16px",
-        display: "flex",
-        alignItems: "center",
-        gap: "12px",
-      }}
-    >
-      <span style={{ fontSize: "20px" }}>{isCompatible ? "✅" : "🚨"}</span>
+    <div style={{
+      padding: "16px 20px",
+      background: isCompatible ? "#f0faf5" : "#fdf2f1",
+      borderRadius: 12,
+      border: `1px solid ${isCompatible ? "#b3dfc8" : "#f5c6c2"}`,
+      marginBottom: 16,
+      display: "flex", alignItems: "center", gap: 12,
+    }}>
+      <span style={{ fontSize: 22, flexShrink: 0 }}>{isCompatible ? "✅" : "🚨"}</span>
       <div>
-        <div
-          style={{
-            fontSize: "14px",
-            fontWeight: 700,
-            color: isCompatible ? "#34d399" : "#f87171",
-          }}
-        >
+        <div style={{
+          fontSize: 14, fontWeight: 700,
+          color: isCompatible ? "#1d6a4a" : "#c0392b",
+        }}>
           {isCompatible
-            ? "Backward Compatible — No breaking changes detected"
+            ? "Backward Compatible — no breaking changes detected"
             : `${breaking} Breaking Change${breaking !== 1 ? "s" : ""} Detected`}
         </div>
-        <div style={{ fontSize: "12px", color: "#64748b", marginTop: "2px" }}>
-          {results.length} total change{results.length !== 1 ? "s" : ""}
-          {warning > 0 ? ` · ${warning} warning${warning !== 1 ? "s" : ""}` : ""}
-          {" · All changes detected deterministically"}
+        <div style={{ fontSize: 12, color: "#9b9690", marginTop: 2 }}>
+          {results.length} total change{results.length !== 1 ? "s" : ""} · All detected deterministically — zero hallucination
         </div>
       </div>
     </div>

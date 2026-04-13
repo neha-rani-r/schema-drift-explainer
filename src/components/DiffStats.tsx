@@ -1,4 +1,3 @@
-// DiffStats.tsx — Summary stats bar showing deterministic detection ratio
 import React from "react";
 import { DriftResult } from "../utils/api";
 
@@ -8,13 +7,6 @@ interface Props {
   newFieldCount: number;
 }
 
-const severityColors: Record<string, string> = {
-  breaking: "#ef4444",
-  warning: "#f59e0b",
-  safe: "#10b981",
-  info: "#6366f1",
-};
-
 export const DiffStats: React.FC<Props> = ({ results, oldFieldCount, newFieldCount }) => {
   if (results.length === 0) return null;
 
@@ -23,87 +15,47 @@ export const DiffStats: React.FC<Props> = ({ results, oldFieldCount, newFieldCou
   const warning = results.filter((r) => r.severity === "warning").length;
   const safe = results.filter((r) => r.severity === "safe").length;
   const detRatio = Math.round((deterministic / results.length) * 100);
+  const fieldDelta = newFieldCount - oldFieldCount;
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexWrap: "wrap",
-        gap: "12px",
-        padding: "14px 18px",
-        background: "#0f172a",
-        borderRadius: "10px",
-        border: "1px solid #1e293b",
-        marginBottom: "16px",
-        alignItems: "center",
-      }}
-    >
-      {/* Field delta */}
-      <Stat
-        label="Fields"
-        value={`${oldFieldCount} → ${newFieldCount}`}
-        sub={newFieldCount > oldFieldCount ? `+${newFieldCount - oldFieldCount}` : `${newFieldCount - oldFieldCount}`}
-        subColor={newFieldCount >= oldFieldCount ? "#10b981" : "#ef4444"}
-      />
-
-      <Divider />
-
-      {/* Severity breakdown */}
-      {breaking > 0 && (
-        <Stat label="Breaking" value={String(breaking)} subColor={severityColors.breaking} dot />
-      )}
-      {warning > 0 && (
-        <Stat label="Warning" value={String(warning)} subColor={severityColors.warning} dot />
-      )}
-      {safe > 0 && (
-        <Stat label="Safe" value={String(safe)} subColor={severityColors.safe} dot />
-      )}
-
-      <Divider />
-
-      {/* Confidence */}
-      <Stat
-        label="Deterministic"
-        value={`${detRatio}%`}
-        sub={`${deterministic}/${results.length} changes`}
-        subColor="#94a3b8"
-        badge="◈"
-        badgeColor="#6366f1"
-      />
+    <div style={{
+      display: "flex", flexWrap: "wrap", gap: 10,
+      padding: "14px 20px",
+      background: "#ffffff", borderRadius: 12,
+      border: "1px solid #e8e4d9",
+      marginBottom: 16, alignItems: "center",
+    }}>
+      <Chip label="Fields" value={`${oldFieldCount} → ${newFieldCount}`}
+        sub={fieldDelta >= 0 ? `+${fieldDelta}` : `${fieldDelta}`}
+        subColor={fieldDelta >= 0 ? "#1d6a4a" : "#c0392b"} />
+      <div style={{ width: 1, height: 32, background: "#e8e4d9" }} />
+      {breaking > 0 && <Chip label="Breaking" value={String(breaking)} dot="#e74c3c" />}
+      {warning > 0 && <Chip label="Warning" value={String(warning)} dot="#e67e22" />}
+      {safe > 0 && <Chip label="Safe" value={String(safe)} dot="#27ae60" />}
+      <div style={{ width: 1, height: 32, background: "#e8e4d9" }} />
+      <Chip label="Deterministic" value={`${detRatio}%`}
+        sub={`${deterministic}/${results.length} changes`} subColor="#9b9690"
+        badge="◈" badgeColor="#7c6fcd" />
     </div>
   );
 };
 
-interface StatProps {
-  label: string;
-  value: string;
-  sub?: string;
-  subColor?: string;
-  dot?: boolean;
-  badge?: string;
-  badgeColor?: string;
+interface ChipProps {
+  label: string; value: string;
+  sub?: string; subColor?: string;
+  dot?: string; badge?: string; badgeColor?: string;
 }
 
-const Stat: React.FC<StatProps> = ({ label, value, sub, subColor, dot, badge, badgeColor }) => (
-  <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-    <span style={{ fontSize: "11px", color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+const Chip: React.FC<ChipProps> = ({ label, value, sub, subColor, dot, badge, badgeColor }) => (
+  <div style={{ display: "flex", flexDirection: "column", gap: 1, padding: "0 4px" }}>
+    <span style={{ fontSize: 10, color: "#9b9690", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 500 }}>
       {label}
     </span>
-    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-      {dot && (
-        <span style={{ width: 8, height: 8, borderRadius: "50%", background: subColor, display: "inline-block" }} />
-      )}
-      {badge && (
-        <span style={{ color: badgeColor, fontSize: "13px" }}>{badge}</span>
-      )}
-      <span style={{ fontSize: "18px", fontWeight: 700, color: "#f1f5f9" }}>{value}</span>
-      {sub && !dot && (
-        <span style={{ fontSize: "12px", color: subColor || "#94a3b8" }}>{sub}</span>
-      )}
+    <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+      {dot && <span style={{ width: 7, height: 7, borderRadius: "50%", background: dot, flexShrink: 0 }} />}
+      {badge && <span style={{ color: badgeColor, fontSize: 12 }}>{badge}</span>}
+      <span style={{ fontSize: 18, fontWeight: 700, color: "#1a1916", fontFamily: "'DM Mono', monospace" }}>{value}</span>
+      {sub && <span style={{ fontSize: 11, color: subColor || "#9b9690" }}>{sub}</span>}
     </div>
   </div>
-);
-
-const Divider: React.FC = () => (
-  <div style={{ width: 1, height: 36, background: "#1e293b", margin: "0 4px" }} />
 );
