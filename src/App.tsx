@@ -206,7 +206,7 @@ export default function App() {
               <div style={{ fontFamily: "'Fraunces', serif", fontWeight: 700, fontSize: 15, letterSpacing: "-0.02em", color: "#1a1916" }}>
                 Schema Drift Explainer
               </div>
-              <div style={{ fontSize: 11, color: "#9b9690", marginTop: -1 }}>Month 2 of 12 · DataForge Series</div>
+              <div style={{ fontSize: 11, color: "#9b9690", marginTop: -1 }}>Month 2 of 12 · Data Engineering Series</div>
             </div>
           </div>
 
@@ -444,7 +444,7 @@ export default function App() {
         >
           Neha Rani
         </a>
-        {" "}· Month 2 of 12 · DataForge Series · Powered by Llama 3.1 8B via Groq
+        {" "}· Month 2 of 12 · Data Engineering Series · Powered by Llama 3.1 8B via Groq
       </footer>
     </div>
   );
